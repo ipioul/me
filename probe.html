@@ -1,0 +1,21 @@
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.186.1/build/three.module.js","three/addons/":"https://unpkg.com/three@0.186.1/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const L = new FBXLoader(), out = {};
+const a = await L.loadAsync('anim/MF_Pistol_Idle_ADS.FBX');
+const m = await L.loadAsync('model/Mannequin.FBX');
+const bn = o => { const r = []; o.traverse(n => { if (n.isBone) r.push(n.name); }); return r; };
+const ab = bn(a), mb = bn(m);
+let meshes = 0; a.traverse(n => { if (n.isMesh) meshes++; });
+out.meshes = meshes; out.animBones = ab.length; out.manBones = mb.length;
+out.onlyAnim = ab.filter(x => !mb.includes(x)); out.onlyMan = mb.filter(x => !ab.includes(x));
+out.clips = a.animations.map(c => ({ name: c.name, dur: c.duration, tracks: c.tracks.length, sample: c.tracks.slice(0, 4).map(t => t.name + ':' + t.times.length) }));
+const tn = a.animations[0].tracks.map(t => t.name);
+out.posTracks = tn.filter(n => n.endsWith('.position')).length;
+out.scaleTracks = tn.filter(n => n.endsWith('.scale')).length;
+out.rootScaleA = a.scale.toArray(); out.rootRotA = a.rotation.toArray().slice(0,3); out.rootRotM = m.rotation.toArray().slice(0,3);
+out.ikGunTrack = tn.filter(n => n.includes('ik_hand'));
+out.mRootChildren = m.children.map(c => c.name + ':' + c.type); out.aRootChildren = a.children.map(c => c.name + ':' + c.type);
+document.title = 'P ' + JSON.stringify(out);
+</script>
