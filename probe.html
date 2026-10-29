@@ -1,0 +1,22 @@
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.186.1/build/three.module.js","three/addons/":"https://unpkg.com/three@0.186.1/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const L = new FBXLoader(), out = {};
+const a = await L.loadAsync('anim/MF_Pistol_Idle_ADS.FBX');
+const m = await L.loadAsync('model/Mannequin.FBX');
+const B = o => { const r = {}; o.traverse(n => { if (n.isBone) r[n.name] = n; }); return r; };
+const ab = B(a), mb = B(m);
+a.updateMatrixWorld(true); m.updateMatrixWorld(true);
+const P = b => b.getWorldPosition(new THREE.Vector3());
+const f = v => v.toArray().map(x => +x.toFixed(1));
+const dir = (bs, x, y) => P(bs[y]).sub(P(bs[x])).normalize();
+const ang = (x, y, x2, y2) => +(dir(ab, x2 || x, y2 || y).angleTo(dir(mb, x, y)) / Math.PI * 180).toFixed(1);
+out.restAngles = { upperarm_l: ang('upperarm_l','lowerarm_l'), lowerarm_l: ang('lowerarm_l','hand_l'), thigh_l: ang('thigh_l','calf_l'), calf_l: ang('calf_l','foot_l'), hand_l: ang('hand_l','middle_01_l'), index1: ang('index_01_l','index_02_l'), thumb1: ang('thumb_01_l','thumb_02_l'), spine: ang('pelvis','neck_01') };
+out.restPos = { a_pelvis: f(P(ab.pelvis)), m_pelvis: f(P(mb.pelvis)), a_head: f(P(ab.head)), m_head: f(P(mb.head)), a_handl: f(P(ab.hand_l)), m_handl: f(P(mb.hand_l)) };
+const mix = new THREE.AnimationMixer(a); mix.clipAction(a.animations[0]).play(); mix.setTime(0.5); a.updateMatrixWorld(true);
+const q = b => b.getWorldQuaternion(new THREE.Quaternion());
+const axes = b => ['x','y','z'].map((k, i) => k + f(new THREE.Vector3().setComponent(i, 1).applyQuaternion(q(b))));
+out.f = { pelvis: f(P(ab.pelvis)), head: f(P(ab.head)), hand_r: f(P(ab.hand_r)), hand_l: f(P(ab.hand_l)), gun: f(P(ab.ik_hand_gun)), ikr: f(P(ab.ik_hand_r)), root: f(P(ab.root)), foot_l: f(P(ab.foot_l)), foot_r: f(P(ab.foot_r)), gunAxes: axes(ab.ik_hand_gun), handAxes: axes(ab.hand_r) };
+document.title = 'P ' + JSON.stringify(out);
+</script>
