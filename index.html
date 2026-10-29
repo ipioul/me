@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mannequin – Shooting Stance Pose</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1e23; font-family: system-ui, sans-serif; color: #e6e6e6; }
+  #app { position: fixed; inset: 0; }
+  #ui { position: fixed; top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 6px; z-index: 2; }
+  #ui button { background: #2b3038; color: #e6e6e6; border: 1px solid #444b55; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+  #ui button:hover, #ui button.active { background: #3d6fb6; border-color: #3d6fb6; }
+  #ref { position: fixed; right: 12px; bottom: 12px; width: 220px; border: 2px solid #444b55; border-radius: 6px; z-index: 2; }
+  #ref.hidden { display: none; }
+  #status { position: fixed; left: 12px; bottom: 12px; font-size: 12px; opacity: .7; z-index: 2; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.186.1/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="ui">
+  <button data-view="photo" class="active">Photo view</button>
+  <button data-view="front">Front</button>
+  <button data-view="left">Left</button>
+  <button data-view="right">Right</button>
+  <button data-view="back">Back</button>
+  <button data-view="top">Top</button>
+  <button id="spin">Auto-rotate</button>
+  <button id="toggleRef">Reference</button>
+</div>
+<img id="ref" src="assets/reference.png" alt="Reference pose">
+<div id="status">Loading mannequin…</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const DEG = Math.PI / 180;
+
+// ---------- scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1e23);
+scene.fog = new THREE.Fog(0x1b1e23, 600, 1400);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 1, 5000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 95, 10);
+
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a3f47, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+sun.position.set(180, 380, 220);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -200, right: 200, top: 250, bottom: -100, near: 10, far: 1000 });
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0x9fc3ff, 1.0);
+rim.position.set(-250, 200, -250);
+scene.add(rim);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(800, 64),
+  new THREE.MeshStandardMaterial({ color: 0x5d7a80, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+const grid = new THREE.GridHelper(800, 40, 0x7f9aa0, 0x6a8890);
+grid.position.y = 0.05;
+grid.material.opacity = 0.35; grid.material.transparent = true;
+scene.add(grid);
+
+// ---------- bone helpers (all targets are in world space) ----------
+const bones = {};
+const restWorldQ = {};
+const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3();
+
+function worldPos(b) { b.updateWorldMatrix(true, false); return b.getWorldPosition(new THREE.Vector3()); }
+function worldQuat(b) { b.updateWorldMatrix(true, false); return b.getWorldQuaternion(new THREE.Quaternion()); }
+
+// Set a bone's world orientation, keeping the hierarchy consistent.
+function setWorldQuat(b, q) {
+  const parentQ = worldQuat(b.parent);
+  b.quaternion.copy(parentQ.invert().multiply(q));
+  b.updateMatrixWorld(true);
+}
+// Rotate a bone about a world axis (from its current pose).
+function rotateWorld(b, axis, angle) {
+  setWorldQuat(b, _q.setFromAxisAngle(axis.clone().normalize(), angle).multiply(worldQuat(b)));
+}
+// Orient a bone from its rest pose so (child - bone) points along dir, and a
+// rest-space reference vector (refRest) points as close as possible to refTarget.
+function orient(b, child, dir, refRest, refTarget) {
+  setWorldQuat(b, restWorldQ[b.name].clone());
+  const cur = worldPos(child).sub(worldPos(b)).normalize();
+  const d = dir.clone().normalize();
+  const m1 = basis(cur, refRest), m2 = basis(d, refTarget);
+  const rot = new THREE.Quaternion().setFromRotationMatrix(m2.multiply(m1.transpose()));
+  setWorldQuat(b, rot.multiply(worldQuat(b)));
+}
+function basis(a, ref) {
+  const x = a.clone().normalize();
+  const z = new THREE.Vector3().crossVectors(x, ref).normalize();
+  const y = new THREE.Vector3().crossVectors(z, x);
+  return new THREE.Matrix4().makeBasis(x, y, z);
+}
+// Point a bone at a world position with the minimal rotation from its current pose.
+function aimAt(b, child, target) {
+  const cur = worldPos(child).sub(worldPos(b)).normalize();
+  const want = target.clone().sub(worldPos(b)).normalize();
+  setWorldQuat(b, _q2.setFromUnitVectors(cur, want).multiply(worldQuat(b)));
+}
+// Two-bone IK: root -> mid -> end reaches target, mid bends toward pole.
+function twoBoneIK(root, mid, end, target, pole) {
+  const a = worldPos(mid).distanceTo(worldPos(root));
+  const c = worldPos(end).distanceTo(worldPos(mid));
+  const R = worldPos(root);
+  const toT = target.clone().sub(R);
+  const d = Math.min(toT.length(), (a + c) * 0.999);
+  const dir = toT.normalize();
+  const cosA = (a * a + d * d - c * c) / (2 * a * d);
+  const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  const perp = pole.clone().sub(dir.clone().multiplyScalar(pole.dot(dir))).normalize();
+  const knee = R.clone().add(dir.clone().multiplyScalar(a * cosA)).add(perp.multiplyScalar(a * sinA));
+  aimAt(root, mid, knee);
+  aimAt(mid, end, R.clone().add(dir.multiplyScalar(d)));
+}
+function curlFinger(names, axis, angles) {
+  names.forEach((n, i) => rotateWorld(bones[n], axis, angles[i] * DEG));
+}
+
+// ---------- the pose (character faces +Z, left = +X) ----------
+function applyPose() {
+  const Y = V(0, 1, 0), X = V(1, 0, 0);
+
+  // Crouched athletic stance: hips dropped, turned slightly, torso leaning in.
+  bones.pelvis.position.add(_v.set(0, 0, 0)); // keep local offsets; drop via world move below
+  const pelvisWorld = worldPos(bones.pelvis);
+  const drop = V(0, -11, -4);
+  bones.pelvis.position.copy(bones.pelvis.parent.worldToLocal(pelvisWorld.add(drop)));
+  bones.pelvis.updateMatrixWorld(true);
+  rotateWorld(bones.pelvis, Y, 18 * DEG);
+  rotateWorld(bones.pelvis, X, 6 * DEG);
+
+  rotateWorld(bones.spine_01, X, 6 * DEG);
+  rotateWorld(bones.spine_02, X, 6 * DEG);
+  rotateWorld(bones.spine_02, Y, -10 * DEG);
+  rotateWorld(bones.spine_03, X, 3 * DEG);
+  rotateWorld(bones.spine_03, Y, -6 * DEG);
+
+  // Shoulders rolled slightly forward toward the gun.
+  rotateWorld(bones.clavicle_l, Y, -8 * DEG);
+  rotateWorld(bones.clavicle_r, Y, 8 * DEG);
+
+  // Legs: right foot forward, left foot back (as in the photo), knees bent.
+  const footY = restAnkleY;
+  twoBoneIK(bones.thigh_r, bones.calf_r, bones.foot_r, V(-17, footY, 24), V(-0.3, 0, 1));
+  twoBoneIK(bones.thigh_l, bones.calf_l, bones.foot_l, V(24, footY + 4, -34), V(0.4, 0, 1));
+  // Feet flat; front foot toward target, rear foot turned out with heel lifted.
+  setWorldQuat(bones.foot_r, new THREE.Quaternion().setFromAxisAngle(Y, -8 * DEG).multiply(restWorldQ.foot_r));
+  const rearYaw = new THREE.Quaternion().setFromAxisAngle(Y, 35 * DEG);
+  const heelUp = new THREE.Quaternion().setFromAxisAngle(V(1, 0, 0).applyQuaternion(rearYaw), 16 * DEG);
+  setWorldQuat(bones.foot_l, heelUp.multiply(rearYaw).multiply(restWorldQ.foot_l));
+
+  // Arms: two-handed grip, extended toward the target at chin height.
+  const shoulderR = worldPos(bones.upperarm_r), shoulderL = worldPos(bones.upperarm_l);
+  const shoulderMid = shoulderR.clone().add(shoulderL).multiplyScalar(0.5);
+  const grip = shoulderMid.clone().add(V(-3, 1, 47));
+  twoBoneIK(bones.upperarm_r, bones.lowerarm_r, bones.hand_r, grip.clone().add(V(-1.5, 0, 0)), V(-0.7, -1, -0.2));
+  twoBoneIK(bones.upperarm_l, bones.lowerarm_l, bones.hand_l, grip.clone().add(V(4.5, -2, -1)), V(0.8, -1, -0.2));
+
+  // Hands: knuckles forward, index side up (pistol grip); support hand wraps under.
+  const across = n => worldPos(bones['index_01_' + n]).sub(worldPos(bones['pinky_01_' + n]));
+  const restAcrossR = restAcross.r, restAcrossL = restAcross.l;
+  orient(bones.hand_r, bones.middle_01_r, V(0.35, -0.15, 1), restAcrossR, V(0, 1, 0.1));
+  orient(bones.hand_l, bones.middle_01_l, V(-0.45, -0.25, 1), restAcrossL, V(-0.2, 1, 0.1));
+
+  for (const s of ['r', 'l']) {
+    const fwd = worldPos(bones['middle_01_' + s]).sub(worldPos(bones['hand_' + s])).normalize();
+    const acr = across(s).normalize();
+    // Palm normal; mirrored for the left hand.
+    const palm = s === 'r' ? new THREE.Vector3().crossVectors(acr, fwd) : new THREE.Vector3().crossVectors(fwd, acr);
+    const curlAxis = new THREE.Vector3().crossVectors(fwd, palm).normalize();
+    const trigger = s === 'r';
+    curlFinger(['index_01_' + s, 'index_02_' + s, 'index_03_' + s], curlAxis, trigger ? [25, 45, 25] : [55, 60, 35]);
+    for (const f of ['middle', 'ring', 'pinky'])
+      curlFinger([f + '_01_' + s, f + '_02_' + s, f + '_03_' + s], curlAxis, [70, 75, 40]);
+    curlFinger(['thumb_02_' + s, 'thumb_03_' + s], curlAxis, [15, 15]);
+  }
+
+  // Head: level, looking down the sights.
+  setWorldQuat(bones.neck_01, new THREE.Quaternion().setFromAxisAngle(Y, -2 * DEG).multiply(restWorldQ.neck_01));
+  setWorldQuat(bones.head, new THREE.Quaternion().setFromAxisAngle(X, 8 * DEG).multiply(restWorldQ.head));
+}
+
+// ---------- simple training pistol in the right hand ----------
+function makePistol() {
+  const g = new THREE.Group();
+  const black = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5, metalness: 0.4 });
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3.0, 18.5), black);
+  slide.position.set(0, 4.0, 3.2);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 15), black);
+  frame.position.set(0, 2.0, 2.2);
+  const gripMesh = new THREE.Mesh(new THREE.BoxGeometry(2.8, 11, 4.6), black);
+  gripMesh.position.set(0, -3.6, -3.4);
+  gripMesh.rotation.x = -18 * DEG;
+  const guard = new THREE.Mesh(new THREE.TorusGeometry(2.0, 0.35, 8, 16, Math.PI), black);
+  guard.rotation.y = Math.PI / 2; guard.rotation.z = Math.PI;
+  guard.position.set(0, 1.2, 1.2);
+  [slide, frame, gripMesh, guard].forEach(m => { m.castShadow = true; g.add(m); });
+  return g;
+}
+
+// ---------- load ----------
+let restAnkleY = 13.5;
+const restAcross = {};
+new FBXLoader().load('model/Mannequin.FBX', (obj) => {
+  obj.updateMatrixWorld(true);
+  obj.traverse(n => {
+    if (n.isBone) bones[n.name] = n;
+    if (n.isMesh) {
+      n.castShadow = true; n.receiveShadow = true;
+      n.material = new THREE.MeshStandardMaterial({ color: 0xc9ccd2, roughness: 0.45, metalness: 0.05 });
+    }
+  });
+  for (const k in bones) restWorldQ[k] = worldQuat(bones[k]);
+  restAnkleY = worldPos(bones.foot_l).y;
+  for (const s of ['r', 'l']) restAcross[s] = worldPos(bones['index_01_' + s]).sub(worldPos(bones['pinky_01_' + s])).normalize();
+
+  applyPose();
+
+  // Place the pistol in the right hand's grip, barrel along the aim line.
+  const pistol = makePistol();
+  const hR = worldPos(bones.hand_r);
+  const fwdR = worldPos(bones.middle_01_r).sub(hR).normalize();
+  const up = worldPos(bones.index_01_r).sub(worldPos(bones.pinky_01_r)).normalize();
+  const aim = V(0, 0, 1);
+  pistol.position.copy(hR).add(fwdR.multiplyScalar(6.5)).add(up.multiplyScalar(-1.5)).add(V(2.2, 0, 0));
+  pistol.quaternion.setFromUnitVectors(V(0, 0, 1), aim);
+  scene.add(pistol);
+  bones.hand_r.attach(pistol);
+
+  // Rest the feet on the ground.
+  const box = new THREE.Box3().setFromObject(obj);
+  obj.position.y -= box.min.y;
+  scene.add(obj);
+
+  document.getElementById('status').textContent = 'Drag to orbit · scroll to zoom · right-drag to pan';
+  setView(new URLSearchParams(location.search).get('view') || 'photo');
+  window.READY = true;
+}, undefined, (e) => { document.getElementById('status').textContent = 'Failed to load model: ' + e; });
+
+// ---------- views ----------
+const views = {
+  photo: [V(205, 150, -160), V(0, 92, 12)],
+  front: [V(0, 120, 360), V(0, 92, 0)],
+  back:  [V(0, 120, -360), V(0, 92, 0)],
+  left:  [V(360, 120, 10), V(0, 92, 10)],
+  right: [V(-360, 120, 10), V(0, 92, 10)],
+  top:   [V(0.01, 420, 10), V(0, 60, 10)],
+};
+function setView(name) {
+  const [pos, tgt] = views[name] || views.photo;
+  camera.position.copy(pos); controls.target.copy(tgt); controls.update();
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+}
+document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
+document.getElementById('spin').onclick = (e) => { controls.autoRotate = !controls.autoRotate; e.target.classList.toggle('active', controls.autoRotate); };
+document.getElementById('toggleRef').onclick = () => document.getElementById('ref').classList.toggle('hidden');
+if (new URLSearchParams(location.search).has('noref')) document.getElementById('ref').classList.add('hidden');
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>
