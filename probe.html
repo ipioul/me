@@ -1,0 +1,13 @@
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.186.1/build/three.module.js","three/addons/":"https://unpkg.com/three@0.186.1/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
+new FBXLoader().load('model/Mannequin.FBX', o=>{
+  o.updateMatrixWorld(true);
+  const out=[]; o.traverse(n=>{const p=new THREE.Vector3();n.getWorldPosition(p);
+   let d=0,q=n;while(q.parent){d++;q=q.parent}
+   out.push(' '.repeat(d)+n.type+' '+n.name+' '+p.toArray().map(v=>v.toFixed(1)).join(','));});
+  const b=new THREE.Box3().setFromObject(o); out.push('box '+JSON.stringify(b)); out.push('anims '+o.animations.length);
+  window.R=out.join('\n');
+},undefined,e=>window.R='ERR '+e);
+</script>
