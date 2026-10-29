@@ -1,0 +1,20 @@
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.186.1/build/three.module.js","three/addons/":"https://unpkg.com/three@0.186.1/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const L = new FBXLoader(), out = {};
+const man = await L.loadAsync('model/Mannequin.FBX');
+const names = o => { const r = []; o.traverse(n => { if (n.isBone) r.push(n.name); }); return r; };
+const mb = names(man);
+for (const f of ['A_AR_AimWalkPose_Fwd', 'A_AR_Aim_Fwd', 'MF_Pistol_Idle_ADS']) {
+  const a = await L.loadAsync('anim/' + f + '.FBX');
+  const ab = names(a), c = a.animations[0];
+  const P = {}; a.traverse(n => { if (n.isBone) P[n.name] = n; });
+  a.updateMatrixWorld(true);
+  const mix = new THREE.AnimationMixer(a); mix.clipAction(c).play(); mix.setTime(0); a.updateMatrixWorld(true);
+  const f1 = b => P[b].getWorldPosition(new THREE.Vector3()).toArray().map(x => +x.toFixed(1));
+  out[f] = { bones: ab.length, missing: mb.filter(x => !ab.includes(x)), extra: ab.filter(x => !mb.includes(x)).slice(0, 12), clips: a.animations.length, dur: +c.duration.toFixed(3), tracks: c.tracks.length, times: c.tracks[0].times.length,
+    pelvis: f1('pelvis'), footL: f1('foot_l'), footR: f1('foot_r'), handR: f1('hand_r'), handL: f1('hand_l'), head: f1('head'), ik: ['ik_hand_gun','weapon_r','ik_foot_root'].filter(n => P[n]) };
+}
+document.title = 'P ' + JSON.stringify(out);
+</script>
