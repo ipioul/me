@@ -1,0 +1,45 @@
+<!doctype html><html><body><pre id="out">loading</pre>
+<script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.186.1/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.186.1/examples/jsm/" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+window.onerror = (m) => { document.getElementById('out').textContent = 'ERR ' + m; };
+const g = await new GLTFLoader().loadAsync('../assets/glb/m4_fps.glb');
+const root = g.scene; const by = {}; root.traverse(o => by[o.name] = o);
+const mixer = new THREE.AnimationMixer(root); mixer.clipAction(g.animations.find(a => a.name === 'Fire')).play(); mixer.setTime(0);
+root.updateMatrixWorld(true);
+const W = by.Main_j_049, inv = W.matrixWorld.clone().invert();
+const out = {};
+const f = v => v.toArray().map(x => +x.toFixed(2));
+const L = n => f(new THREE.Vector3().setFromMatrixPosition(by[n].matrixWorld).applyMatrix4(inv));
+const main = by.Main_M4_D_0; const pos = main.geometry.attributes.position, v = new THREE.Vector3();
+out.skinned = !!main.isSkinnedMesh; out.bindMode = main.bindMode;
+const bins = {}; let mz = -1e9; const pts = [];
+for (let i = 0; i < pos.count; i++) {
+  v.fromBufferAttribute(pos, i); if (main.isSkinnedMesh) main.applyBoneTransform(i, v); v.applyMatrix4(main.matrixWorld).applyMatrix4(inv);
+  pts.push(v.clone()); mz = Math.max(mz, v.z);
+  const b = Math.round(v.z / 3) * 3; const e = bins[b] ||= { ymax: -1e9, ymin: 1e9, xmin: 1e9, xmax: -1e9 };
+  e.ymax = Math.max(e.ymax, v.y); e.ymin = Math.min(e.ymin, v.y); e.xmin = Math.min(e.xmin, v.x); e.xmax = Math.max(e.xmax, v.x);
+}
+const tip = pts.filter(p => p.z > mz - 0.5); const c = tip.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / tip.length);
+out.muzzle = f(c);
+out.bins = Object.keys(bins).map(Number).sort((a, b) => a - b).map(k => [k, +bins[k].ymin.toFixed(1), +bins[k].ymax.toFixed(1), +(bins[k].xmax - bins[k].xmin).toFixed(1)]);
+out.cam = L('FPS_Camera_j_01');
+const H = ['RightHand_05','RightHandMiddle1_014','RightHandIndex1_010','RightHandPinky1_022','RightHandThumb1_06','RightHandIndex4_013','LeftHand_028','LeftHandMiddle1_037','LeftHandIndex1_033','LeftHandPinky1_045','LeftHandIndex4_036','LeftHandThumb4_032','Mag1_j_050','Bolt_j_052','BoltCatch_j_053','Trigger_j_054'];
+for (const n of H) out[n] = L(n);
+const sk = main.skeleton; out.bones = sk ? sk.bones.length : 0;
+// which bones each M4 part mesh is weighted to
+out.parts = {};
+root.traverse(o => { if (o.isSkinnedMesh) { const si = o.geometry.attributes.skinIndex, sw = o.geometry.attributes.skinWeight; const set = new Set(); for (let i = 0; i < Math.min(si.count, 2000); i++) for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > 0.01) set.add(o.skeleton.bones[si.getComponent(i, k)].name); out.parts[o.name] = [...set].slice(0, 6); } });
+const chain = n => { const a = []; let o = by[n]; while (o) { a.push(o.name); o = o.parent; } return a.slice(0, 8).join('<'); };
+const out2 = { chains: ['Main_M4_D_0','Mag1_M4_D_0','Bolt_M4_D_0','Hand_Mesh','Object_7','Main_j_049'].map(chain) };
+for (const [a, ts] of [['Reload', [0, 1.0, 2.0]], ['Reload_Empty', [4.5, 6.0]]]) {
+  mixer.stopAllAction(); mixer.clipAction(g.animations.find(x => x.name === a)).play();
+  for (const t of ts) { mixer.setTime(t); root.updateMatrixWorld(true);
+    const rel = by.Main_j_049.matrixWorld.clone().invert().multiply(by.Main_M4_D_0.matrixWorld);
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(); rel.decompose(p, q, s);
+    out2[a + t] = [f(p), q.toArray().map(x => +x.toFixed(3)), f(s)]; }
+}
+out2.tex = []; root.traverse(o => { if (o.isMesh) out2.tex.push(o.name + ':' + (o.material.map ? 'map' : '-') + (o.material.normalMap ? 'N' : '') + ':' + o.material.type); });
+document.getElementById('out').textContent = JSON.stringify(out2);
+</script></body></html>
