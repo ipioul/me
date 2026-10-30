@@ -1,0 +1,40 @@
+<!doctype html><html><body><pre id="out">loading</pre>
+<script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.186.1/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.186.1/examples/jsm/" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const q = new URLSearchParams(location.search);
+window.onerror = (m) => { document.getElementById('out').textContent = 'ERR ' + m; };
+window.onunhandledrejection = e => { document.getElementById('out').textContent = 'ERR ' + e.reason; };
+const g = await new GLTFLoader().loadAsync(q.get('f'));
+const root = g.scene; root.updateMatrixWorld(true);
+const out = { anims: g.animations.map(a => [a.name, +a.duration.toFixed(2), a.tracks.length]) };
+const by = {}; root.traverse(o => by[o.name] = o);
+const W = q.get('w');               // weapon node
+const list = q.get('n').split(',');
+const mixer = new THREE.AnimationMixer(root);
+const inv = new THREE.Matrix4(), p = new THREE.Vector3(), qq = new THREE.Quaternion(), s = new THREE.Vector3();
+const f3 = v => v.toArray().map(x => +x.toFixed(2));
+out.names = Object.keys(by).filter(n=>n).slice(0, 300);
+out.scales = {}; for (const n of [W, ...list]) if (by[n]) { by[n].matrixWorld.decompose(p, qq, s); out.scales[n] = f3(s); }
+// bounding boxes of meshes in weapon space
+out.mesh = {};
+root.traverse(o => { if (o.isMesh) { const b = new THREE.Box3().setFromObject(o); out.mesh[o.name + '<' + (o.parent?.name||'')] = [f3(b.min), f3(b.max)]; } });
+const anim = q.get('a');
+for (const clip of g.animations) {
+  if (anim && !clip.name.includes(anim)) continue;
+  const act = mixer.clipAction(clip); mixer.stopAllAction(); act.play();
+  const rows = [];
+  const step = +(q.get('dt') || 0.25);
+  for (let t = 0; t <= clip.duration + 1e-6; t += step) {
+    mixer.setTime(t); root.updateMatrixWorld(true);
+    inv.copy(by[W].matrixWorld).invert();
+    const r = { t: +t.toFixed(2) };
+    by[W].matrixWorld.decompose(p, qq, s); r.W = f3(p);
+    for (const n of list) { if (!by[n]) continue; const m = by[n].matrixWorld.clone().premultiply(inv); m.decompose(p, qq, s); r[n] = f3(p); }
+    rows.push(r);
+  }
+  out[clip.name] = rows;
+}
+document.getElementById('out').textContent = JSON.stringify(out);
+</script></body></html>
